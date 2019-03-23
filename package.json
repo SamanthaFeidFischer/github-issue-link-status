@@ -18,6 +18,7 @@
     ]
   },
   "dependencies": {
+    "date-fns": "^2.0.0-alpha.27",
     "webext-domain-permission-toggle": "0.0.2",
     "webext-dynamic-content-scripts": "^5.0.1",
     "webext-options-sync": "^0.13.0"

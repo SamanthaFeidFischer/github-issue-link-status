@@ -37,7 +37,9 @@
   "content_scripts":[
     {
       "matches": [
-        "https://github.com/*"
+        "https://github.com/*",
+        "https://docs.sourcegraph.com/*",
+        "http://localhost:5080/*"
       ],
       "js": [
         "content.js"

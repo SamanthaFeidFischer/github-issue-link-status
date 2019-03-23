@@ -1,16 +1,26 @@
 import 'webext-dynamic-content-scripts';
 import OptionsSync from 'webext-options-sync';
 import * as icons from './icons';
+import formatDistance from 'date-fns/formatDistance'
+import parseISO from 'date-fns/parseISO'
 
 let token;
 const __DEV__ = false;
-const endpoint = location.hostname === 'github.com' ? 'https://api.github.com/graphql' : `${location.origin}/api/graphql`;
+const endpoint = (location.hostname === 'docs.sourcegraph.com' || location.host==='localhost:5080' || location.hostname === 'github.com') ? 'https://api.github.com/graphql' : `${location.origin}/api/graphql`;
 const issueUrlRegex = /^[/]([^/]+[/][^/]+)[/](issues|pull)[/](\d+)([/]|$)/;
 const stateColorMap = {
 	open: 'text-green',
 	closed: 'text-red',
 	merged: 'text-purple'
 };
+
+if (location.hostname === 'docs.sourcegraph.com' || location.host==='localhost:5080') {
+	document.body.insertAdjacentHTML('beforeend', `<style>
+	.text-green { color: #28a745 !important; }
+	.text-purple { color: #6f42c1 !important; }
+	.text-red { color: #cb2431 !important; }
+	</style>`)
+}
 
 function anySelector(selector) {
 	const prefix = document.head.style.MozOrient === '' ? 'moz' : 'webkit';
@@ -26,8 +36,7 @@ function query(q) {
 	if (__DEV__) {
 		console.log(q);
 	}
-
-	return q.replace(/\s{2,}/g, ''); // Minify
+	return q
 }
 
 function join(iterable, merger) {
@@ -42,6 +51,22 @@ function buildGQL(links) {
 		repoIssueMap.set(repo, issues);
 	}
 
+	const FIELDS = `
+	number
+	title
+	bodyText
+	state
+	updatedAt
+	milestone {
+		title
+	}
+	assignees(first: 20) {
+		nodes {
+		  login
+		}
+	}
+	`
+
 	return query(
 		join(repoIssueMap, ([repo, issues]) =>
 			esc(repo) + `: repository(
@@ -51,10 +76,10 @@ function buildGQL(links) {
 				${esc(id)}: issueOrPullRequest(number: ${id}) {
 					__typename
 					... on PullRequest {
-						state
+						${FIELDS}
 					}
 					... on Issue {
-						state
+						${FIELDS}
 					}
 				}
 			`)}}
@@ -74,7 +99,17 @@ function getNewLinks() {
 			a[href*="/issues/"]
 		):not(.ILS)
 	`));
-	for (const link of links) {
+
+	// For docs.sourcegraph.com:
+	const docsLinks = document.querySelectorAll(anySelector(`
+		#content
+		a[href^="https://github.com/"]:any(
+			a[href*="/pull/"],
+			a[href*="/issues/"]
+		):not(.ILS)
+	`))
+
+	for (const link of [...links, ...docsLinks]) {
 		link.classList.add('ILS');
 		let [, repo, type, id] = link.pathname.match(issueUrlRegex) || [];
 		if (id) {
@@ -111,11 +146,44 @@ async function apply() {
 			const item = data[esc(repo)][esc(id)];
 			const state = item.state.toLowerCase();
 			const type = item.__typename.toLowerCase();
+
+			const span = document.createElement('span')
+			span.style = 'color:#aaa;font-size:80%'
+			const extras = []
+			if (!link.innerText.includes(item.number)) {
+				extras.push(`#${item.number}`)
+			}
+			if (item.title.includes('WIP') || item.bodyText.includes('(WIP)') || item.bodyText.includes('(TODO)')) {
+				const red = document.createElement('span')
+				red.classList.add('text-red')
+				red.style='font-weight:bold'
+				red.innerText = 'Description WIP'
+				extras.push(red)
+			}
+			if (item.milestone) {
+				const strong = document.createElement('strong')
+				strong.innerText = item.milestone.title
+				extras.push(strong)
+			}
+			extras.push(`${formatDistance(parseISO(item.updatedAt), Date.now())} ago`)
+			if (item.assignees && item.assignees.nodes && item.assignees.nodes.length > 0) {
+				extras.push(item.assignees.nodes.map(({login}) => '@' + login).join(' '))
+			}
+			for (const e of extras) {
+				span.appendChild(document.createTextNode(' '))
+				span.appendChild(typeof e === 'string' ? document.createTextNode(e) : e)
+			}
+			span.title = item.title
+			link.insertAdjacentElement('afterEnd', span)
+
 			link.classList.add(stateColorMap[state]);
 			if (state !== 'open' && state + type !== 'closedpullrequest') {
 				link.querySelector('svg').outerHTML = icons[state + type];
 			}
-		} catch (error) {/* Probably a redirect */}
+		} catch (error) {
+			console.error(error)
+			/* Probably a redirect */
+		}
 	}
 }
 
